@@ -1,6 +1,9 @@
 # Datasets
 **/dataset/*
 
+# Checkpoints
+**/checkpoints/*
+
 # Exported models
 *.joblib
 

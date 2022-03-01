@@ -1,4 +1,2 @@
-# ML Problems
-Collection of ML problems with their tries.
-
-And papers with my personal implementation.
+# ML Things
+Collection of ML problems and papers with personal implementation.

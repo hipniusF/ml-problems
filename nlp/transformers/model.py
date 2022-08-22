@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn.functional as F
 from torch.multiprocessing import Pool
@@ -50,14 +52,36 @@ class FeedForward(nn.Module):
 
 
 class Embedding(nn.Module):
-    def __init__(self, dim_model=512):
+    def __init__(self, dim_model=512, emb_len=10_000):
         super(Embedding, self).__init__()
-        self.emb = nn.Embedding(100_000, dim_model)
-        self.l = nn.Linear(dim_model, dim_model)
+        self.emb = nn.Embedding(emb_len, dim_model)
 
     def forward(self, x):
-        x = self.emb(x)
-        return F.sotfmax(self.l(x), dim=1)
+        return self.emb(x)
+
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, dim_model=512, max_len=10_000):
+        super(PositionalEncoding, self).__init__()
+        pe = torch.zeros((max_len, 1, dim_model))
+        """
+        -- Slow --
+        for i in torch.arange(dim_model // 2):
+            den = torch.pow(torch.tensor(max_len),
+                            torch.tensor(2*i / dim_model))
+            for pos in range(max_len):
+                pe[pos, i] = torch.sin(torch.tensor(pos)/den)
+                pe[pos, i+1] = torch.cos(torch.tensor(pos)/den)
+        """
+        denominator = torch.exp(torch.arange(0, dim_model, 2)
+                                * (-math.log(10000.0) / dim_model))
+        pos = torch.arange(max_len).unsqueeze(1)
+        pe[:, 0, 0::2] = torch.sin(pos * denominator)
+        pe[:, 0, 1::2] = torch.cos(pos * denominator)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        return x + self.pe[:x.size(0)]
 
 
 class ResidualConnectionLayer(nn.Module):
@@ -70,9 +94,28 @@ class ResidualConnectionLayer(nn.Module):
         return self.norm(x + self.sublayer(x))
 
 
+class TokenizerLayer(nn.Module):
+    def __init__(self, vocab):
+        self.vocab = vocab
+        self.word2idx = {x: i for i, x in enumerate(vocab)}
+        self.idx2word = [x for x in vocab]
+
+    def tokenize(self, x: str):
+        l = [self.word2idx[x_i] for x_i in x.casefold().split(' ')]
+        return torch.tensor(l)
+
+    def detokenize(self, x):
+        s = [self.idx2word[x_i] for x_i in x]
+        return ' '.join(s)
+
+
 class Transformer(nn.Module):
-    def __init__(self, dim_model=512, dim_k=64, dim_v=64, h=8, N=6):
+    def __init__(self, input_vocab, output_vocab, dim_model=512, dim_k=64, dim_v=64, h=8, N=6):
         super(Transformer, self).__init__()
+        self.input_tokenizer = TokenizerLayer(input_vocab)
+        self.output_tokenizer = TokenizerLayer(output_vocab)
+        self.embedding = Embedding(dim_model, 697162)
+        self.pos_encoding = PositionalEncoding()
         encoder_layers = []
         for i in range(N):
             encoder_layers.append(ResidualConnectionLayer(
@@ -81,3 +124,9 @@ class Transformer(nn.Module):
                 dim_model, FeedForward(dim_model)
             ))
         self.encoder = nn.Sequential(*encoder_layers)
+
+    def forward(self, x):
+        x = self.input_tokenizer.tokenize(x)
+        x = self.embedding(x)
+        x = self.pos_encoding(x)
+        return x

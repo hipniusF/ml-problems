@@ -12,10 +12,10 @@ class ScaledDotProductAttention(nn.Module):
         self.dim_k = dim_k
         self.dim_v = dim_v
 
-    def forward(self, q, k, v):
-        print(q.shape, k.transpose(1, 2).shape)
-
+    def forward(self, q, k, v, mask=None):
         computed_queries = q.matmul(k.transpose(1, 2))
+        if mask is not None:
+            computed_queries = computed_queries.mask_fill(mask, value=-1e9)
         computed_queries = F.softmax(computed_queries, dim=1)
         return computed_queries.matmul(v)
 
@@ -33,11 +33,18 @@ class MultiHeadAttention(nn.Module):
         self.lv = nn.Linear(dim_model, h*dim_v)
         self.l = nn.Linear(h*dim_v, dim_model)
 
-    def forward(self, q, k, v):
+    def forward(self, x, mask=None):
+        if isinstance(x, tuple):
+            q, k, v = x
+        elif isinstance(x, torch.Tensor):
+            q, k, v = x, x.clone(), x.clone()
+        else:
+            raise TypeError(
+                'Input to MultiHeadAttention excepted to be either Tensor or 3-tuple of Tensors')
         q = self.lv(q).view(-1, self.h, self.dim_k)
         k = self.lv(k).view(-1, self.h, self.dim_k)
         v = self.lv(v).view(-1, self.h, self.dim_v)
-        x = self.attention(q, k, v).view(-1, self.h*self.dim_v)
+        x = self.attention(q, k, v, mask).view(-1, self.h*self.dim_v)
         return self.l(x)
 
 
@@ -112,6 +119,7 @@ class TokenizerLayer(nn.Module):
 class Transformer(nn.Module):
     def __init__(self, input_vocab, output_vocab, dim_model=512, dim_k=64, dim_v=64, h=8, N=6):
         super(Transformer, self).__init__()
+        self.N = N
         self.input_tokenizer = TokenizerLayer(input_vocab)
         self.output_tokenizer = TokenizerLayer(output_vocab)
         self.embedding = Embedding(dim_model, 697162)
@@ -124,9 +132,24 @@ class Transformer(nn.Module):
                 dim_model, FeedForward(dim_model)
             ))
         self.encoder = nn.Sequential(*encoder_layers)
+        self.decoder_masked_attentions = [
+            MultiHeadAttention(dim_k, dim_v, dim_model, h) for _ in N]
+        self.decoder_attentions = [
+            MultiHeadAttention(dim_k, dim_v, dim_model, h) for _ in N]
+        self.decode_ff = [
+            FeedForward(dim_model) for _ in N]
+        self.layer_norm = nn.LayerNorm(dim_model)
 
-    def forward(self, x):
+    def forward(self, x, y):
         x = self.input_tokenizer.tokenize(x)
         x = self.embedding(x)
         x = self.pos_encoding(x)
+        encoded_input = self.encoder(x)
+        for i in range(self.N):
+            v1 = self.decoder_masked_attentions[i](y)
+            y = self.layer_norm(y + v1)
+            v2 = self.decoder_attentions[i](encoded_input)
+            y = self.layer_norm(y + v2)
+            v3 = self.decode_ff[i](y)
+            y = self.layer_norm(y + v3)
         return x

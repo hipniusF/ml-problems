@@ -1,10 +1,9 @@
-from asyncore import readwrite
-from urllib.parse import uses_params
-from xml.dom.minidom import Identified
+from datetime import datetime
+
+import numpy as np
 import torch
 from torch import nn
 from torch import functional as F
-import numpy as np
 from einops import rearrange
 from tqdm import tqdm, trange
 
@@ -169,8 +168,10 @@ class Unet(nn.Module):
 
 
 class DenoisingDiffusion(nn.Module):
-    def __init__(self, diffusion_steps=100, train=False):
+    def __init__(self, diffusion_steps=100, train=False, dev='cpu'):
         super(DenoisingDiffusion, self).__init__()
+        self.dev = dev
+        self.to(dev)
         self.diffusion_steps = diffusion_steps
         self.betas = self.__get_betas('linear')
         self.alphas = torch.tensor(1 - self.betas)
@@ -183,6 +184,8 @@ class DenoisingDiffusion(nn.Module):
     def __init_train(self):
         self.loss_fn = nn.MSELoss()
         self.optim = torch.optim.Adam(self.parameters())
+        self.epoch = 0
+        self.losses = []
 
     def __get_betas(self, mode):
         if mode == 'linear':
@@ -217,12 +220,11 @@ class DenoisingDiffusion(nn.Module):
         return x_t
     
     def train(self, epochs, loader):
-        losses = []
-        for _ in trange(epochs):
-            for x_0, _ in loader:
+        for self.epoch in trange(self.epoch + 1, epochs):
+            for x_0, _ in tqdm(loader, leave=False):
                 t = np.random.randint(1, self.diffusion_steps)
                 eps = torch.randn(x_0.size())
-                alpha_bar = self.alpha_bars[t])
+                alpha_bar = self.alpha_bars[t]
                 eps_hat = self.predict_eps(torch.sqrt(alpha_bar)*x_0 + torch.sqrt(1-alpha_bar)*eps, t)
 
                 for p in self.parameters():
@@ -230,5 +232,7 @@ class DenoisingDiffusion(nn.Module):
                 loss = self.loss_fn(eps, eps_hat)
                 loss.backward()
                 self.optim.step()
-                losses.append(loss.item())
+                self.losses.append(loss.item())
 
+            torch.save({'model': self, 'timestamp': str(datetime.now())},
+                        f'./chkpnts/checkpnt_epoch-{self.epoch}.pt')

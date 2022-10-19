@@ -9,6 +9,32 @@ from einops import rearrange
 from tqdm import tqdm, trange
 
 
+class PositionalEncoder(nn.Module):
+    def __init__(self, c, length):
+        super(PositionalEncoder, self).__init__()
+        self.dim = c
+        self.pe = self.__get_pe(c, length)
+        self.lin = nn.Linear(c, c)
+
+    def __get_pe(self, d_model, length):
+        if d_model % 2 != 0:
+            raise ValueError("Cannot use sin/cos positional encoding with "
+                         "odd dim (got dim={:d})".format(d_model))
+
+        pe = torch.zeros(length, d_model)
+        position = torch.arange(0, length).unsqueeze(1)
+        div_term = torch.exp((torch.arange(0, d_model, 2, dtype=torch.float) *
+                            -(np.log(10000.0) / d_model)))
+
+        pe[:, 0::2] = torch.sin(position.float() * div_term)
+        pe[:, 1::2] = torch.cos(position.float() * div_term)
+
+        return pe
+    
+    def forward(self, x, t):
+        return x + rearrange(self.lin(self.pe[t]), 'd -> d 1 1')
+
+
 class Downsample(nn.Module):
     def __init__(self, in_c, out_c):
         super(Downsample, self).__init__()
@@ -59,7 +85,6 @@ class Attention(nn.Module):
         return self.to_out(h)
 
 
-
 class Block(nn.Module):
     def __init__(self, in_c, out_c, groups=8):
         super(Block, self).__init__()
@@ -74,22 +99,26 @@ class Block(nn.Module):
 
 
 class ResidualBlock(nn.Module):
-    def __init__(self, in_c, out_c, groups=8):
+    def __init__(self, in_c, out_c, t_length, groups=8):
         super(ResidualBlock, self).__init__()
         self.block1 = Block(in_c, in_c, groups if in_c % groups == 0 else in_c)
         self.block2 = Block(in_c, out_c, groups if out_c %
                             groups == 0 else out_c)
         self.conv = nn.Conv2d(
             in_c, out_c, 1) if in_c != out_c else nn.Identity()
+        
+        self.pos_enc = PositionalEncoder(in_c, t_length) if in_c % 2 == 0 else None
 
-    def forward(self, x):
+    def forward(self, x, t):
+        if (self.pos_enc is not None):
+            x = self.pos_enc(x, t)
         h = self.block1(x)
         h = self.block2(h)
         return h + self.conv(x)
 
 
 class Unet(nn.Module):
-    def __init__(self):
+    def __init__(self, t_length):
         super(Unet, self).__init__()
         channels = [3, 128, 256, 512, 512]
         self.down_blocks = nn.ModuleList([])
@@ -100,26 +129,26 @@ class Unet(nn.Module):
         c_pairs = list(zip(channels[:-1], channels[1:]))
         for i, (in_c, out_c) in enumerate(c_pairs):
             self.down_blocks.append(nn.ModuleList(
-                (ResidualBlock(in_c, out_c), ResidualBlock(out_c, out_c), Downsample(
+                (ResidualBlock(in_c, out_c, t_length), ResidualBlock(out_c, out_c, t_length), Downsample(
                     out_c, out_c), Attention(out_c) if in_c in attent_dims else nn.Identity())
             ))
         for i, (out_c, in_c) in enumerate(reversed(c_pairs)):
             self.up_blocks.append(nn.ModuleList(
-                (ResidualBlock(2*in_c, in_c), ResidualBlock(2*in_c, out_c),
+                (ResidualBlock(2*in_c, in_c, t_length), ResidualBlock(2*in_c, out_c, t_length),
                  Upsample(in_c, in_c), Attention(in_c) if in_c in attent_dims else nn.Identity())
             ))
 
         self.middle_conv = nn.Conv2d(channels[-1], channels[-1], 3, padding=1)
 
-    def forward(self, x):
+    def forward(self, x, t):
         h = []
         for block1, block2, down, attn in self.down_blocks:
-            x = block1(x)
+            x = block1(x, t)
             h.append(x)
 
             x = attn(x)
 
-            x = block2(x)
+            x = block2(x, t)
             h.append(x)
 
             x = down(x)
@@ -130,39 +159,76 @@ class Unet(nn.Module):
             x = up(x)
 
             x = torch.cat((x, h.pop()), dim=1)
-            x = block1(x)
+            x = block1(x, t)
 
             x = attn(x)
 
             x = torch.cat((x, h.pop()), dim=1)
-            x = block2(x)
+            x = block2(x, t)
         return x
 
 
 class DenoisingDiffusion(nn.Module):
-    def __init__(self, diffusion_steps=100):
+    def __init__(self, diffusion_steps=100, train=False):
         super(DenoisingDiffusion, self).__init__()
         self.diffusion_steps = diffusion_steps
-        self.betas = self._get_betas('linear')
-        self.unet = Unet()
+        self.betas = self.__get_betas('linear')
+        self.alphas = torch.tensor(1 - self.betas)
+        self.alpha_bars = [torch.prod(self.alphas[:t])
+                            for t, _ in enumerate(self.alphas)]
+        self.unet = Unet(diffusion_steps)
+        if train:
+            self.__init_train()
+    
+    def __init_train(self):
+        self.loss_fn = nn.MSELoss()
+        self.optim = torch.optim.Adam(self.parameters())
 
-    def _get_betas(self, mode):
+    def __get_betas(self, mode):
         if mode == 'linear':
             return np.linspace(1e-4, .02, self.diffusion_steps)
 
+    def q_sample(self, x_t, t):
+        return torch.sqrt(self.alpha_bars[t])*x_t \
+            + torch.sqrt(1-self.alpha_bars[t])*torch.randn(x_t.size())
+        
     @torch.no_grad()
     def forward_process(self, img):
-        alphas = torch.tensor(1 - self.betas)
         for t in trange(self.diffusion_steps):
-            alpha_bar = torch.prod(alphas[:t])
-            img = torch.sqrt(alpha_bar)*img \
-                + torch.sqrt(1-alpha_bar)*torch.randn(img.size())
+            img = self.q_sample(img, t)
         return img
 
-    def p_sample(self, x_t, t):
-        return self.unet(x_t)
+    def predict_eps(self, x_t, t):
+        return self.unet(x_t, t)
 
-    def backward_process(self, x_t, steps):
-        for t in steps:
+    def p_sample(self, x_t, t):
+            z = torch.randn(x_t.size()) if t > 1 else 0
+            eps_hat = self.predict_eps(x_t, t)
+            alpha = self.alphas[t]
+            alpha_bar = self.alpha_bars[t]
+            predicted_error = (1-alpha)/(1-alpha_bar)*eps_hat
+            return 1/torch.sqrt(alpha) * (x_t - predicted_error) + self.betas[t]*z
+
+
+    def backward_process(self, x_t):
+        for t in trange(self.diffusion_steps):
             x_t = self.p_sample(x_t, t)
+            
         return x_t
+    
+    def train(self, epochs, loader):
+        losses = []
+        for _ in trange(epochs):
+            for x_0, _ in loader:
+                t = np.random.randint(1, self.diffusion_steps)
+                eps = torch.randn(x_0.size())
+                alpha_bar = self.alpha_bars[t])
+                eps_hat = self.predict_eps(torch.sqrt(alpha_bar)*x_0 + torch.sqrt(1-alpha_bar)*eps, t)
+
+                for p in self.parameters():
+                    p.grad = None
+                loss = self.loss_fn(eps, eps_hat)
+                loss.backward()
+                self.optim.step()
+                losses.append(loss.item())
+

@@ -8,11 +8,14 @@ from einops import rearrange
 from tqdm import tqdm, trange
 
 
+def get_device():
+    return 'cuda' if torch.cuda.is_available() else 'cpu'
+
 class PositionalEncoder(nn.Module):
     def __init__(self, c, length):
         super(PositionalEncoder, self).__init__()
         self.dim = c
-        self.pe = self.__get_pe(c, length)
+        self.pe = self.__get_pe(c, length).to(get_device())
         self.lin = nn.Linear(c, c)
 
     def __get_pe(self, d_model, length):
@@ -168,10 +171,9 @@ class Unet(nn.Module):
 
 
 class DenoisingDiffusion(nn.Module):
-    def __init__(self, diffusion_steps=100, train=False, dev='cpu'):
+    def __init__(self, diffusion_steps=100, train=False, dev=get_device()):
         super(DenoisingDiffusion, self).__init__()
         self.dev = dev
-        self.to(dev)
         self.diffusion_steps = diffusion_steps
         self.betas = self.__get_betas('linear')
         self.alphas = torch.tensor(1 - self.betas)
@@ -180,11 +182,12 @@ class DenoisingDiffusion(nn.Module):
         self.unet = Unet(diffusion_steps)
         if train:
             self.__init_train()
-    
+        self.to(dev)
+
     def __init_train(self):
+        self.epoch = 0
         self.loss_fn = nn.MSELoss()
         self.optim = torch.optim.Adam(self.parameters())
-        self.epoch = 0
         self.losses = []
 
     def __get_betas(self, mode):
@@ -194,7 +197,7 @@ class DenoisingDiffusion(nn.Module):
     def q_sample(self, x_t, t):
         return torch.sqrt(self.alpha_bars[t])*x_t \
             + torch.sqrt(1-self.alpha_bars[t])*torch.randn(x_t.size())
-        
+
     @torch.no_grad()
     def forward_process(self, img):
         for t in trange(self.diffusion_steps):
@@ -205,25 +208,29 @@ class DenoisingDiffusion(nn.Module):
         return self.unet(x_t, t)
 
     def p_sample(self, x_t, t):
-            z = torch.randn(x_t.size()) if t > 1 else 0
+            z = torch.randn(x_t.size()).to(self.dev) if t > 1 else 0
             eps_hat = self.predict_eps(x_t, t)
             alpha = self.alphas[t]
             alpha_bar = self.alpha_bars[t]
             predicted_error = (1-alpha)/(1-alpha_bar)*eps_hat
             return 1/torch.sqrt(alpha) * (x_t - predicted_error) + self.betas[t]*z
 
-
-    def backward_process(self, x_t):
-        for t in trange(self.diffusion_steps):
+    @torch.no_grad()
+    def backward_process(self, x_t, steps=None):
+        if steps is None:
+            steps = self.diffusion_steps
+        x_t = x_t.to(self.dev)
+        for t in trange(1, steps):
             x_t = self.p_sample(x_t, t)
             
         return x_t
-    
+
     def train(self, epochs, loader):
         for self.epoch in trange(self.epoch + 1, epochs):
             for x_0, _ in tqdm(loader, leave=False):
+                x_0 = x_0.to(self.dev)
                 t = np.random.randint(1, self.diffusion_steps)
-                eps = torch.randn(x_0.size())
+                eps = torch.randn(x_0.size(), device=self.dev)
                 alpha_bar = self.alpha_bars[t]
                 eps_hat = self.predict_eps(torch.sqrt(alpha_bar)*x_0 + torch.sqrt(1-alpha_bar)*eps, t)
 
@@ -234,5 +241,20 @@ class DenoisingDiffusion(nn.Module):
                 self.optim.step()
                 self.losses.append(loss.item())
 
-            torch.save({'model': self, 'timestamp': str(datetime.now())},
-                        f'./chkpnts/checkpnt_epoch-{self.epoch}.pt')
+            self.save(f'./chkpnts/checkpnt_epoch-{self.epoch}.pt')
+        
+    def save(self, path):
+            torch.save({'net': self.state_dict(), 
+                        'optim': self.optim.state_dict(),
+                        'losses': self.losses,
+                        'epoch': self.epoch,
+                        'timestamp': str(datetime.now())
+                       },
+                path)
+    
+    def load(self, path):
+        chk = torch.load(path)
+        self.load_state_dict(chk['net'])
+        self.optim.load_stat_dict(chk['optim'])
+        self.losses = chk['losses']
+        self.epoch = chk['epoch']

@@ -3,6 +3,7 @@
 
 # Checkpoints
 **/checkpoints/*
+**/chkpnts/*
 
 # Exported models
 *.joblib

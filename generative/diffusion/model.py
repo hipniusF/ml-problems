@@ -5,7 +5,7 @@ import torch
 from torch import nn
 from torch import functional as F
 from einops import rearrange
-from tqdm import tqdm, trange
+from tqdm.notebook import tqdm, trange
 
 
 def get_device():

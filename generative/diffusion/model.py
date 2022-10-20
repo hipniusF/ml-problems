@@ -126,7 +126,7 @@ class Unet(nn.Module):
         self.down_blocks = nn.ModuleList([])
         self.up_blocks = nn.ModuleList([])
 
-        attent_dims = [1024, 512, 256]
+        attent_dims = [512, 512, 256]
 
         c_pairs = list(zip(channels[:-1], channels[1:]))
         for i, (in_c, out_c) in enumerate(c_pairs):

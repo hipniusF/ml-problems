@@ -6,6 +6,9 @@ from torch import nn
 from torch import functional as F
 from einops import rearrange
 from tqdm.notebook import tqdm, trange
+from ema_pytorch import EMA
+
+from matplotlib import pyplot as plt
 
 
 def get_device():
@@ -187,8 +190,14 @@ class DenoisingDiffusion(nn.Module):
     def __init_train(self):
         self.epoch = 0
         self.loss_fn = nn.MSELoss()
-        self.optim = torch.optim.Adam(self.parameters())
+        self.optim = torch.optim.Adam(self.parameters(), lr=6e-4)
         self.losses = []
+        self.ema = EMA(
+            self.unet,
+            beta=.9999,
+            update_after_step = 100,
+            update_every=100
+        ).to(self.dev)
 
     def __get_betas(self, mode):
         if mode == 'linear':
@@ -225,7 +234,7 @@ class DenoisingDiffusion(nn.Module):
             
         return x_t
 
-    def train(self, epochs, loader):
+    def train_loop(self, epochs, loader):
         for self.epoch in trange(self.epoch + 1, epochs):
             for x_0, _ in tqdm(loader, leave=False):
                 x_0 = x_0.to(self.dev)
@@ -239,6 +248,7 @@ class DenoisingDiffusion(nn.Module):
                 loss = self.loss_fn(eps, eps_hat)
                 loss.backward()
                 self.optim.step()
+                self.ema.update()
                 self.losses.append(loss.item())
 
             self.save(f'./chkpnts/checkpnt_epoch-{self.epoch}.pt')
@@ -248,6 +258,7 @@ class DenoisingDiffusion(nn.Module):
                         'optim': self.optim.state_dict(),
                         'losses': self.losses,
                         'epoch': self.epoch,
+                        'ema': self.ema.state_dict(),
                         'timestamp': str(datetime.now())
                        },
                 path)
@@ -256,5 +267,6 @@ class DenoisingDiffusion(nn.Module):
         chk = torch.load(path)
         self.load_state_dict(chk['net'])
         self.optim.load_stat_dict(chk['optim'])
+        self.ema.load_state_dict(chk['ema'])
         self.losses = chk['losses']
         self.epoch = chk['epoch']

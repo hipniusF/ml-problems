@@ -251,7 +251,28 @@ class DenoisingDiffusion(nn.Module):
                 self.ema.update()
                 self.losses.append(loss.item())
 
+            self.notify(self.backward_process())
             self.save(f'./chkpnts/checkpnt_epoch-{self.epoch}.pt')
+    
+    def notify(self, x):
+        '''
+        Send notification through:
+        https://github.com/marcoperg/telegram-notifier
+        '''
+
+        import os
+        import io
+        import requests
+        x = x.deatch().cpu().numpy()
+
+        buf = io.BytesIO()
+        plt.imsave(buf, x, format='jpg')
+        image_data = buf.getvalue()
+        url = 'http://localhost:3000'
+        files = {'photo': image_data}
+        headers = {'token': os.environ['SECRET']}
+        data = {'text': 'Hola'}
+        requests.post(url, files=files, data=data, headers=headers)
         
     def save(self, path):
             torch.save({'net': self.state_dict(), 

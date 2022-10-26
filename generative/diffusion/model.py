@@ -235,6 +235,8 @@ class DenoisingDiffusion(nn.Module):
         return x_t
 
     def train_loop(self, epochs, loader):
+        self.train()
+
         for self.epoch in trange(self.epoch + 1, epochs):
             for x_0, _ in tqdm(loader, leave=False):
                 x_0 = x_0.to(self.dev)
@@ -251,7 +253,7 @@ class DenoisingDiffusion(nn.Module):
                 self.ema.update()
                 self.losses.append(loss.item())
 
-            self.notify(self.backward_process())
+            self.notify(self.backward_process(torch.randn((1, 3, 128, 128)).to(self.dev)))
             self.save(f'./chkpnts/checkpnt_epoch-{self.epoch}.pt')
     
     def notify(self, x):
@@ -263,15 +265,25 @@ class DenoisingDiffusion(nn.Module):
         import os
         import io
         import requests
-        x = x.deatch().cpu().numpy()
+        import dotenv
+        dotenv.load_dotenv()
+
+        x = x.squeeze()
+        print(x.shape)
+        x = x.movedim((1, 2, 0), (0, 1, 2))
+        x = x.detach().cpu().numpy()
+        x = (x + 1) / 2
+        x = np.clip(x, 0, 1)
+        plt.imshow(x)
+        plt.show()
 
         buf = io.BytesIO()
-        plt.imsave(buf, x, format='jpg')
+        plt.imsave(buf, x, format='png')
         image_data = buf.getvalue()
         url = 'http://localhost:3000'
         files = {'photo': image_data}
         headers = {'token': os.environ['SECRET']}
-        data = {'text': 'Hola'}
+        data = {'text': f'Epoch {self.epoch}'}
         requests.post(url, files=files, data=data, headers=headers)
         
     def save(self, path):

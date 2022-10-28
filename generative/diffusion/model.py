@@ -253,8 +253,8 @@ class DenoisingDiffusion(nn.Module):
                 self.ema.update()
                 self.losses.append(loss.item())
 
-            self.notify(self.backward_process(torch.randn((1, 3, 128, 128)).to(self.dev)))
             self.save(f'./chkpnts/checkpnt_epoch-{self.epoch}.pt')
+            self.notify(self.backward_process(torch.randn((1, 3, 128, 128)).to(self.dev)))
     
     def notify(self, x):
         '''

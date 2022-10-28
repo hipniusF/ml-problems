@@ -299,7 +299,7 @@ class DenoisingDiffusion(nn.Module):
     def load(self, path):
         chk = torch.load(path)
         self.load_state_dict(chk['net'])
-        self.optim.load_stat_dict(chk['optim'])
+        self.optim.load_state_dict(chk['optim'])
         self.ema.load_state_dict(chk['ema'])
         self.losses = chk['losses']
         self.epoch = chk['epoch']

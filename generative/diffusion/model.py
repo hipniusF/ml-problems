@@ -186,18 +186,18 @@ class DenoisingDiffusion(nn.Module):
         if train:
             self.__init_train()
         self.to(dev)
-
-    def __init_train(self):
-        self.epoch = 0
-        self.loss_fn = nn.MSELoss()
-        self.optim = torch.optim.Adam(self.parameters(), lr=6e-4)
-        self.losses = []
         self.ema = EMA(
             self.unet,
             beta=.9999,
             update_after_step = 100,
             update_every=100
         ).to(self.dev)
+
+    def __init_train(self):
+        self.epoch = 0
+        self.loss_fn = nn.MSELoss()
+        self.optim = torch.optim.Adam(self.parameters(), lr=6e-4)
+        self.losses = []
 
     def __get_betas(self, mode):
         if mode == 'linear':
@@ -213,12 +213,14 @@ class DenoisingDiffusion(nn.Module):
             img = self.q_sample(img, t)
         return img
 
-    def predict_eps(self, x_t, t):
+    def predict_eps(self, x_t, t, ema=False):
+        if ema:
+            return self.ema(x_t, t)
         return self.unet(x_t, t)
 
-    def p_sample(self, x_t, t):
+    def p_sample(self, x_t, t, ema=False):
             z = torch.randn(x_t.size()).to(self.dev) if t > 1 else 0
-            eps_hat = self.predict_eps(x_t, t)
+            eps_hat = self.predict_eps(x_t, t, ema)
             alpha = self.alphas[t]
             alpha_bar = self.alpha_bars[t]
             predicted_error = (1-alpha)/(1-alpha_bar)*eps_hat
@@ -230,7 +232,7 @@ class DenoisingDiffusion(nn.Module):
             steps = self.diffusion_steps
         x_t = x_t.to(self.dev)
         for t in trange(1, steps):
-            x_t = self.p_sample(x_t, t)
+            x_t = self.p_sample(x_t, t, ema=True)
             
         return x_t
 

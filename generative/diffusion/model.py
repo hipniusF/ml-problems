@@ -104,7 +104,7 @@ class Block(nn.Module):
 
 
 class ResidualBlock(nn.Module):
-    def __init__(self, in_c, out_c, t_length, groups=8):
+    def __init__(self, in_c, out_c, t_length, groups=8, dropout_rate=0):
         super(ResidualBlock, self).__init__()
         self.block1 = Block(in_c, in_c, groups if in_c % groups == 0 else in_c)
         self.block2 = Block(in_c, out_c, groups if out_c %
@@ -113,34 +113,42 @@ class ResidualBlock(nn.Module):
             in_c, out_c, 1) if in_c != out_c else nn.Identity()
         
         self.pos_enc = PositionalEncoder(in_c, t_length) if in_c % 2 == 0 else None
+        self.dropout = nn.Dropout(p=dropout_rate, inplace=True)
 
     def forward(self, x, t):
         if (self.pos_enc is not None):
             x = self.pos_enc(x, t)
         h = self.block1(x)
+        h = self.dropout(x)
         h = self.block2(h)
         return h + self.conv(x)
 
 
 class Unet(nn.Module):
-    def __init__(self, t_length):
+    def __init__(self, t_length, dropout_rate=0):
         super(Unet, self).__init__()
-        channels = [3, 128, 256, 512, 512]
+        channels = [3, 128, 256, 256, 256]
         self.down_blocks = nn.ModuleList([])
         self.up_blocks = nn.ModuleList([])
 
-        attent_dims = [512, 512, 256]
+        attent_dims = channels[-3:]
 
         c_pairs = list(zip(channels[:-1], channels[1:]))
         for i, (in_c, out_c) in enumerate(c_pairs):
-            self.down_blocks.append(nn.ModuleList(
-                (ResidualBlock(in_c, out_c, t_length), ResidualBlock(out_c, out_c, t_length), Downsample(
-                    out_c, out_c), Attention(out_c) if in_c in attent_dims else nn.Identity())
+            self.down_blocks.append(nn.ModuleList((
+                    ResidualBlock(in_c, out_c, t_length, dropout_rate=dropout_rate),
+                    ResidualBlock(out_c, out_c, t_length, dropout_rate=dropout_rate), 
+                    Downsample(out_c, out_c),
+                    Attention(out_c) if in_c in attent_dims else nn.Identity()
+                )
             ))
         for i, (out_c, in_c) in enumerate(reversed(c_pairs)):
-            self.up_blocks.append(nn.ModuleList(
-                (ResidualBlock(2*in_c, in_c, t_length), ResidualBlock(2*in_c, out_c, t_length),
-                 Upsample(in_c, in_c), Attention(in_c) if in_c in attent_dims else nn.Identity())
+            self.up_blocks.append(nn.ModuleList((
+                    ResidualBlock(2*in_c, in_c, t_length, dropout_rate=dropout_rate),
+                    ResidualBlock(2*in_c, out_c, t_length, dropout_rate=dropout_rate),
+                    Upsample(in_c, in_c),
+                    Attention(in_c) if in_c in attent_dims else nn.Identity()
+                )
             ))
 
         self.middle_conv = nn.Conv2d(channels[-1], channels[-1], 3, padding=1)
@@ -182,7 +190,7 @@ class DenoisingDiffusion(nn.Module):
         self.alphas = torch.tensor(1 - self.betas)
         self.alpha_bars = [torch.prod(self.alphas[:t])
                             for t, _ in enumerate(self.alphas)]
-        self.unet = Unet(diffusion_steps)
+        self.unet = Unet(diffusion_steps+1, dropout_rate=0.1)
         if train:
             self.__init_train()
         self.to(dev)
@@ -201,7 +209,7 @@ class DenoisingDiffusion(nn.Module):
 
     def __get_betas(self, mode):
         if mode == 'linear':
-            return np.linspace(1e-4, .02, self.diffusion_steps)
+            return np.linspace(1e-4, .02, self.diffusion_steps+1)
 
     def q_sample(self, x_t, t):
         return torch.sqrt(self.alpha_bars[t])*x_t \
@@ -209,7 +217,7 @@ class DenoisingDiffusion(nn.Module):
 
     @torch.no_grad()
     def forward_process(self, img):
-        for t in trange(self.diffusion_steps):
+        for t in trange(self.diffusion_steps+1):
             img = self.q_sample(img, t)
         return img
 
@@ -227,13 +235,12 @@ class DenoisingDiffusion(nn.Module):
             return 1/torch.sqrt(alpha) * (x_t - predicted_error) + self.betas[t]*z
 
     @torch.no_grad()
-    def backward_process(self, x_t, steps=None):
+    def backward_process(self, x_t, steps=None, ema=True):
         if steps is None:
             steps = self.diffusion_steps
         x_t = x_t.to(self.dev)
-        for t in trange(1, steps):
-            x_t = self.p_sample(x_t, t, ema=True)
-            
+        for t in trange(1, steps+1):
+            x_t = self.p_sample(x_t, t, ema=ema)
         return x_t
 
     def train_loop(self, epochs, loader):
@@ -271,7 +278,6 @@ class DenoisingDiffusion(nn.Module):
         dotenv.load_dotenv()
 
         x = x.squeeze()
-        print(x.shape)
         x = x.movedim((1, 2, 0), (0, 1, 2))
         x = x.detach().cpu().numpy()
         x = (x + 1) / 2

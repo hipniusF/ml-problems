@@ -65,7 +65,7 @@ class Upsample(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, in_c, num_heads=8):
+    def __init__(self, in_c, num_heads=16):
         super(Attention, self).__init__()
         self.c = in_c  # // 8
         self.num_heads = num_heads
@@ -125,11 +125,18 @@ class ResidualBlock(nn.Module):
 
 
 class Unet(nn.Module):
-    def __init__(self, t_length, dropout_rate=0):
+    def __init__(
+        self,
+        init_c=3,
+        channels=[32, 32, 64, 128, 256],
+        t_length=1000,
+        dropout_rate=0
+    ):
         super(Unet, self).__init__()
-        channels = [3, 128, 256, 256, 256]
         self.down_blocks = nn.ModuleList([])
         self.up_blocks = nn.ModuleList([])
+        self.in_conv = nn.Conv2d(init_c, channels[0], 7, padding=3)
+        self.out_conv = nn.Conv2d(channels[0], init_c, 7, padding=3)
 
         attent_dims = channels[-3:]
 
@@ -154,6 +161,7 @@ class Unet(nn.Module):
         self.middle_conv = nn.Conv2d(channels[-1], channels[-1], 3, padding=1)
 
     def forward(self, x, t):
+        x = self.in_conv(x)
         h = []
         for block1, block2, down, attn in self.down_blocks:
             x = block1(x, t)
@@ -178,21 +186,30 @@ class Unet(nn.Module):
 
             x = torch.cat((x, h.pop()), dim=1)
             x = block2(x, t)
-        return x
+
+        return self.out_conv(x)
 
 
 class DenoisingDiffusion(nn.Module):
-    def __init__(self, diffusion_steps=100, train=False, dev=get_device()):
+    def __init__(
+        self,
+        lr=2e-4,
+        init_c=3,
+        channels=[32, 32, 64, 128, 256],
+        diffusion_steps=1000,
+        dropout_rate=0,
+        loss='l1',
+        dev=get_device()
+    ):
         super(DenoisingDiffusion, self).__init__()
         self.dev = dev
+        self.lr = lr
         self.diffusion_steps = diffusion_steps
         self.betas = self.__get_betas('linear')
         self.alphas = torch.tensor(1 - self.betas)
         self.alpha_bars = [torch.prod(self.alphas[:t])
                             for t, _ in enumerate(self.alphas)]
-        self.unet = Unet(diffusion_steps+1, dropout_rate=0.1)
-        if train:
-            self.__init_train()
+        self.unet = Unet(init_c=init_c, channels=channels, t_length=diffusion_steps+1, dropout_rate=dropout_rate)
         self.to(dev)
         self.ema = EMA(
             self.unet,
@@ -201,10 +218,9 @@ class DenoisingDiffusion(nn.Module):
             update_every=100
         ).to(self.dev)
 
-    def __init_train(self):
         self.epoch = 0
-        self.loss_fn = nn.MSELoss()
-        self.optim = torch.optim.Adam(self.parameters(), lr=6e-4)
+        self.loss_fn = nn.L1Loss() if loss=='l1' else nn.MSELoss()
+        self.optim = torch.optim.Adam(self.parameters(), lr=self.lr)
         self.losses = []
 
     def __get_betas(self, mode):

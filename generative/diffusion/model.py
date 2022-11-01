@@ -65,7 +65,7 @@ class Upsample(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, in_c, num_heads=16):
+    def __init__(self, in_c, num_heads=8):
         super(Attention, self).__init__()
         self.c = in_c  # // 8
         self.num_heads = num_heads

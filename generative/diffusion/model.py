@@ -218,7 +218,6 @@ class DenoisingDiffusion(nn.Module):
             update_every=100
         ).to(self.dev)
 
-        self.epoch = 0
         self.step = 0
         self.loss_fn = nn.L1Loss() if loss=='l1' else nn.MSELoss()
         self.optim = torch.optim.Adam(self.parameters(), lr=self.lr)
@@ -314,14 +313,13 @@ class DenoisingDiffusion(nn.Module):
         url = 'http://localhost:3000'
         files = {'photo': image_data}
         headers = {'token': os.environ['SECRET']}
-        data = {'text': f'Epoch {self.epoch}'}
+        data = {'text': f'Step {self.step//1000}k'}
         requests.post(url, files=files, data=data, headers=headers)
         
     def save(self, path):
             torch.save({'net': self.state_dict(), 
                         'optim': self.optim.state_dict(),
                         'losses': self.losses,
-                        'epoch': self.epoch,
                         'step': self.step,
                         'ema': self.ema.state_dict(),
                         'timestamp': str(datetime.now())
@@ -334,5 +332,4 @@ class DenoisingDiffusion(nn.Module):
         self.optim.load_state_dict(chk['optim'])
         self.ema.load_state_dict(chk['ema'])
         self.losses = chk['losses']
-        self.epoch = chk['epoch']
         self.step = chk['step']

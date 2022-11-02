@@ -5,7 +5,7 @@ import torch
 from torch import nn
 from torch import functional as F
 from einops import rearrange
-from tqdm.notebook import tqdm, trange
+from tqdm.auto import tqdm, trange
 from ema_pytorch import EMA
 
 from matplotlib import pyplot as plt
@@ -219,6 +219,7 @@ class DenoisingDiffusion(nn.Module):
         ).to(self.dev)
 
         self.epoch = 0
+        self.step = 0
         self.loss_fn = nn.L1Loss() if loss=='l1' else nn.MSELoss()
         self.optim = torch.optim.Adam(self.parameters(), lr=self.lr)
         self.losses = []
@@ -251,36 +252,42 @@ class DenoisingDiffusion(nn.Module):
             return 1/torch.sqrt(alpha) * (x_t - predicted_error) + self.betas[t]*z
 
     @torch.no_grad()
-    def backward_process(self, x_t, steps=None, ema=True):
+    def backward_process(self, x_t, steps=None, ema=True, tqdm=False):
         if steps is None:
             steps = self.diffusion_steps
         x_t = x_t.to(self.dev)
-        for t in trange(1, steps+1):
+        for t in trange(1, steps+1, disable=not tqdm):
             x_t = self.p_sample(x_t, t, ema=ema)
         return x_t
 
-    def train_loop(self, epochs, loader):
+    def train_loop(self, steps, loader):
         self.train()
 
-        for self.epoch in trange(self.epoch + 1, epochs):
-            for x_0, _ in tqdm(loader, leave=False):
-                x_0 = x_0.to(self.dev)
-                t = np.random.randint(1, self.diffusion_steps)
-                eps = torch.randn(x_0.size(), device=self.dev)
-                alpha_bar = self.alpha_bars[t]
-                eps_hat = self.predict_eps(torch.sqrt(alpha_bar)*x_0 + torch.sqrt(1-alpha_bar)*eps, t)
+        with tqdm(initial=self.step, total=steps) as tbar:
+            while self.step <= steps:
+                for x_0, _ in loader:
+                    x_0 = x_0.to(self.dev)
+                    t = np.random.randint(1, self.diffusion_steps)
+                    eps = torch.randn(x_0.size(), device=self.dev)
+                    alpha_bar = self.alpha_bars[t]
+                    eps_hat = self.predict_eps(torch.sqrt(alpha_bar)*x_0 + torch.sqrt(1-alpha_bar)*eps, t)
 
-                for p in self.parameters():
-                    p.grad = None
-                loss = self.loss_fn(eps, eps_hat)
-                loss.backward()
-                self.optim.step()
-                self.ema.update()
-                self.losses.append(loss.item())
+                    for p in self.parameters():
+                        p.grad = None
+                    loss = self.loss_fn(eps, eps_hat)
+                    loss.backward()
+                    self.optim.step()
+                    self.ema.update()
+                    self.losses.append(loss.item())
 
-            self.save(f'./chkpnts/checkpnt_epoch-{self.epoch}.pt')
-            self.notify(self.backward_process(torch.randn((1, 3, 128, 128)).to(self.dev)))
-    
+                    if self.step % 10_000 == 0:
+                        self.save(f'./chkpnts/checkpnt_step-{self.step // 1000}k.pt')
+                        size = [1, *x_0.size()[1:]]
+                        self.notify(self.backward_process(torch.randn(size).to(self.dev)))
+
+                    self.step += 1
+                    tbar.update(1)
+
     def notify(self, x):
         '''
         Send notification through:
@@ -298,8 +305,8 @@ class DenoisingDiffusion(nn.Module):
         x = x.detach().cpu().numpy()
         x = (x + 1) / 2
         x = np.clip(x, 0, 1)
-        plt.imshow(x)
-        plt.show()
+        #plt.imshow(x)
+        #plt.show()
 
         buf = io.BytesIO()
         plt.imsave(buf, x, format='png')
@@ -315,6 +322,7 @@ class DenoisingDiffusion(nn.Module):
                         'optim': self.optim.state_dict(),
                         'losses': self.losses,
                         'epoch': self.epoch,
+                        'step': self.step,
                         'ema': self.ema.state_dict(),
                         'timestamp': str(datetime.now())
                        },
@@ -327,3 +335,4 @@ class DenoisingDiffusion(nn.Module):
         self.ema.load_state_dict(chk['ema'])
         self.losses = chk['losses']
         self.epoch = chk['epoch']
+        self.step = chk['step']

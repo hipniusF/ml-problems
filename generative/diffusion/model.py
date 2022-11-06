@@ -247,11 +247,11 @@ class DenoisingDiffusion(nn.Module):
             eps_hat = self.predict_eps(x_t, t, ema)
             alpha = self.alphas[t]
             alpha_bar = self.alpha_bars[t]
-            predicted_error = (1-alpha)/(1-alpha_bar)*eps_hat
+            predicted_error = ((1-alpha)/torch.sqrt(1-alpha_bar))*eps_hat
             return 1/torch.sqrt(alpha) * (x_t - predicted_error) + self.betas[t]*z
 
     @torch.no_grad()
-    def backward_process(self, x_t, steps=None, ema=True, tqdm=False):
+    def backward_process(self, x_t, steps=None, ema=False, tqdm=False):
         if steps is None:
             steps = self.diffusion_steps
         x_t = x_t.to(self.dev)

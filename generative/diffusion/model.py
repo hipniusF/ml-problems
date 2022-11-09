@@ -65,7 +65,7 @@ class Upsample(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, in_c, num_heads=8):
+    def __init__(self, in_c, num_heads=16):
         super(Attention, self).__init__()
         self.c = in_c  # // 8
         self.num_heads = num_heads
@@ -158,7 +158,10 @@ class Unet(nn.Module):
                 )
             ))
 
-        self.middle_conv = nn.Conv2d(channels[-1], channels[-1], 3, padding=1)
+        mid_c = channels[-1]
+        self.middle_conv1 = ResidualBlock(mid_c, mid_c, t_length, dropout_rate=dropout_rate)
+        self.mid_att = Attention(mid_c)
+        self.middle_conv2 = ResidualBlock(mid_c, mid_c, t_length, dropout_rate=dropout_rate)
 
     def forward(self, x, t):
         x = self.in_conv(x)
@@ -174,7 +177,9 @@ class Unet(nn.Module):
 
             x = down(x)
 
-        x = self.middle_conv(x)
+        x = self.middle_conv1(x, t)
+        x = self.mid_att(x)
+        x = self.middle_conv2(x,t)
 
         for block1, block2, up, attn in self.up_blocks:
             x = up(x)

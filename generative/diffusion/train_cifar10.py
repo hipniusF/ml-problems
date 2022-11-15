@@ -37,10 +37,10 @@ import os
 
 def get_model():
     model = DenoisingDiffusion(
-        lr=2e-4,
+        lr=5e-4,
         channels=[64, 128, 128, 128],
         diffusion_steps=1000,
-        dropout_rate=0.1,
+        dropout_rate=0.2,
         dev=dev
     )
     try:
@@ -50,7 +50,7 @@ def get_model():
         if len(ns) == 0:
             raise Exception('No checkpoints in ./chkpnts')
         n = sorted(ns)[-1]
-        print(f'checkpnt_epoch-{n}.pt')
+        print(f'checkpnt_epoch-{n}k.pt')
         model.load(f'chkpnts/checkpnt_step-{n}k.pt')
 
     except Exception as e:

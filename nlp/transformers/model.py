@@ -29,7 +29,7 @@ class MultiHeadAttention(nn.Module):
         self.dim_k = dim_model // h
         self.dim_model = dim_model
         self.h = h
-        self.attention = Attention(dim_k, dim_v)
+        self.attention = Attention(self.dim_k, self.dim_k)
         self.lq = nn.Linear(dim_model, dim_model)
         self.lk = nn.Linear(dim_model, dim_model)
         self.lv = nn.Linear(dim_model, dim_model)
@@ -46,7 +46,7 @@ class MultiHeadAttention(nn.Module):
                 'Input to MultiHeadAttention excepted to be either Tensor or 3-tuple of Tensors')
         q = self.lv(q).view(-1, self.h, self.dim_k)
         k = self.lv(k).view(-1, self.h, self.dim_k)
-        v = self.lv(v).view(-1, self.h, self.dim_v)
+        v = self.lv(v).view(-1, self.h, self.dim_k)
         x = self.attention(q, k, v, mask).contiguous().view(-1, self.h*self.dim_v)
         del q
         del k
@@ -76,7 +76,7 @@ class Embedding(nn.Module):
 
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, dim_model=512, droupout=0, max_len=10_000):
+    def __init__(self, dim_model=512, dropout=0, max_len=10_000):
         super(PositionalEncoding, self).__init__()
         self.dropout = nn.Dropout(dropout)
         pe = torch.zeros((max_len, dim_model))
@@ -94,7 +94,7 @@ class PositionalEncoding(nn.Module):
 
 
 class ResidualConnectionLayer(nn.Module):
-    def __init__(self, model_dim, sublayer, dropoup=0.1):
+    def __init__(self, model_dim, sublayer, dropout=0.1):
         super(ResidualConnectionLayer, self).__init__()
         self.norm = nn.LayerNorm(model_dim)
         self.sublayer = sublayer
@@ -108,8 +108,10 @@ class Encoder(nn.Module):
     def __init__(self, N, dim_model=512, d_ff=2048, dropout=0.1):
         super(Encoder, self).__init__()
         self.atts = [ResidualConnectionLayer(
+            dim_model,
             MultiHeadAttention(dim_model, dropout=dropout), dropout=dropout) for _ in range(N)]
         self.ffs = [ResidualConnectionLayer(
+            dim_model,
             FeedForward(dim_model, d_ff, dropout=dropout), dropout=dropout) for _ in range(N)]
     
     def forward(self, x, mask=None):
@@ -122,10 +124,13 @@ class Decoder(nn.Module):
     def __init__(self, N, dim_model=512, d_ff=2048, dropout=0.1):
         super(Decoder, self).__init__()
         self.src_atts = [ResidualConnectionLayer(
+            dim_model,
             MultiHeadAttention(dim_model, dropout=dropout), dropout=dropout) for _ in range(N)]
         self.tgt_atts = [ResidualConnectionLayer(
+            dim_model,
             MultiHeadAttention(dim_model, dropout=dropout), dropout=dropout) for _ in range(N)]
         self.ffs = [ResidualConnectionLayer(
+            dim_model,
             FeedForward(dim_model, d_ff, dropout=dropout), dropout=dropout) for _ in range(N)]
     
     def forward(self, x, memory, tgt_mask=None, src_mask=None):
@@ -147,14 +152,14 @@ class Generator(nn.Module):
 
 
 class EncoderDecoder(nn.Module):
-    def __init__(self, src_vocab, tgt_vocab, N=6, dim_model=512, d_ff, dropout=0.1):
+    def __init__(self, src_vocab, tgt_vocab, N=6, dim_model=512, d_ff=2048, dropout=0.1):
         super(EncoderDecoder, self).__init__()
         self.src_vocab = src_vocab
         self.tgt_vocab = tgt_vocab
         self.encoder = Encoder(N, dim_model, d_ff, dropout)
         self.decoder = Decoder(N, dim_model, d_ff, dropout)
-        self.src_embed = nn.Sequential(Embedding(d_model, src_vocab), PositionalEncoding(dim_model, dropout))
-        self.tgt_embed = nn.Sequential(Embedding(d_model, tgt_vocab), PositionalEncoding(dim_mode, dropout))
+        self.src_embed = nn.Sequential(Embedding(dim_model, src_vocab), PositionalEncoding(dim_model, dropout))
+        self.tgt_embed = nn.Sequential(Embedding(dim_model, tgt_vocab), PositionalEncoding(dim_model, dropout))
         self.generator = Generator(dim_model, tgt_vocab)
 
         # Initialize parameters with Glorot / fan_avg.
@@ -172,18 +177,3 @@ class EncoderDecoder(nn.Module):
     
     def decode(self, tgt, tgt_mask, memory, src_mask):
         self.decoder(tgt, memory, tgt_mask, src_mask)
-
-
-class TokenizerLayer(nn.Module):
-    def __init__(self, vocab):
-        self.vocab = vocab
-        self.word2idx = {x: i for i, x in enumerate(vocab)}
-        self.idx2word = [x for x in vocab]
-
-    def tokenize(self, x: str):
-        l = [self.word2idx[x_i] for x_i in x.casefold().split(' ')]
-        return torch.tensor(l)
-
-    def detokenize(self, x):
-        s = [self.idx2word[x_i] for x_i in x]
-        return ' '.join(s)

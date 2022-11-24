@@ -16,7 +16,7 @@ class Attention(nn.Module):
     def forward(self, q, k, v, mask=None):
         computed_queries = q.matmul(k.transpose(-2, -1)) / math.sqrt(self.dim_k)
         if mask is not None:
-            computed_queries = computed_queries.mask_fill(mask == 0, value=-1e9)
+            computed_queries = computed_queries.masked_fill(mask == 0, value=-1e9)
         computed_queries = F.softmax(computed_queries, dim=-1)
         computed_queries = self.dropout(computed_queries)
         return computed_queries.matmul(v)
@@ -44,14 +44,16 @@ class MultiHeadAttention(nn.Module):
         else:
             raise TypeError(
                 'Input to MultiHeadAttention excepted to be either Tensor or 3-tuple of Tensors')
-        q = self.lv(q).view(-1, self.h, self.dim_k)
-        k = self.lv(k).view(-1, self.h, self.dim_k)
-        v = self.lv(v).view(-1, self.h, self.dim_k)
-        x = self.attention(q, k, v, mask).contiguous().view(-1, self.h*self.dim_v)
+        batch_size = q.size(0)
+        q = self.lv(q).view(batch_size, -1, self.h, self.dim_k)
+        k = self.lv(k).view(batch_size, -1, self.h, self.dim_k)
+        v = self.lv(v).view(batch_size, -1, self.h, self.dim_k)
+        x = self.attention(q, k, v, mask).contiguous().view(batch_size, -1, self.h*self.dim_k)
         del q
         del k
         del v
-        return self.l(x)
+        x = self.l(x)
+        return x
 
 
 class FeedForward(nn.Module):
@@ -93,45 +95,62 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 
-class ResidualConnectionLayer(nn.Module):
+class EncoderResidualLayer(nn.Module):
     def __init__(self, model_dim, sublayer, dropout=0.1):
-        super(ResidualConnectionLayer, self).__init__()
+        super(EncoderResidualLayer, self).__init__()
         self.norm = nn.LayerNorm(model_dim)
         self.sublayer = sublayer
         self.dropout = nn.Dropout(p=dropout)
 
-    def forward(self, x):
-        return self.norm(x + self.dropout(self.sublayer(x)))
+    def forward(self, x, mask=None):
+        if mask is not None:
+            return self.norm(x + self.dropout(self.sublayer(x, mask=mask)))
+        else:
+            return self.norm(x + self.dropout(self.sublayer(x)))
 
+
+class DecoderResidualLayer(nn.Module):
+    def __init__(self, model_dim, sublayer, dropout=0.1):
+        super(DecoderResidualLayer, self).__init__()
+        self.norm = nn.LayerNorm(model_dim)
+        self.sublayer = sublayer
+        self.dropout = nn.Dropout(p=dropout)
+
+    def forward(self, q, k, v, mask=None):
+        if mask is not None:
+            return self.norm(q + self.dropout(self.sublayer((q, k, v), mask=mask)))
+        else:
+            return self.norm(q + self.dropout(self.sublayer((q, k, v))))
 
 class Encoder(nn.Module):
     def __init__(self, N, dim_model=512, d_ff=2048, dropout=0.1):
         super(Encoder, self).__init__()
-        self.atts = [ResidualConnectionLayer(
+        self.atts = nn.ModuleList([EncoderResidualLayer(
             dim_model,
-            MultiHeadAttention(dim_model, dropout=dropout), dropout=dropout) for _ in range(N)]
-        self.ffs = [ResidualConnectionLayer(
+            MultiHeadAttention(dim_model, dropout=dropout), dropout=dropout) for _ in range(N)])
+        self.ffs = nn.ModuleList([EncoderResidualLayer(
             dim_model,
-            FeedForward(dim_model, d_ff, dropout=dropout), dropout=dropout) for _ in range(N)]
+            FeedForward(dim_model, d_ff, dropout=dropout), dropout=dropout) for _ in range(N)])
     
     def forward(self, x, mask=None):
         for att, ff in zip(self.atts, self.ffs):
-            x = att(x, mask)
+            x = att(x, mask=mask)
             x = ff(x)
         return x
+
 
 class Decoder(nn.Module):
     def __init__(self, N, dim_model=512, d_ff=2048, dropout=0.1):
         super(Decoder, self).__init__()
-        self.src_atts = [ResidualConnectionLayer(
+        self.src_atts = nn.ModuleList([EncoderResidualLayer(
             dim_model,
-            MultiHeadAttention(dim_model, dropout=dropout), dropout=dropout) for _ in range(N)]
-        self.tgt_atts = [ResidualConnectionLayer(
+            MultiHeadAttention(dim_model, dropout=dropout), dropout=dropout) for _ in range(N)])
+        self.tgt_atts = nn.ModuleList([DecoderResidualLayer(
             dim_model,
-            MultiHeadAttention(dim_model, dropout=dropout), dropout=dropout) for _ in range(N)]
-        self.ffs = [ResidualConnectionLayer(
+            MultiHeadAttention(dim_model, dropout=dropout), dropout=dropout) for _ in range(N)])
+        self.ffs = nn.ModuleList([EncoderResidualLayer(
             dim_model,
-            FeedForward(dim_model, d_ff, dropout=dropout), dropout=dropout) for _ in range(N)]
+            FeedForward(dim_model, d_ff, dropout=dropout), dropout=dropout) for _ in range(N)])
     
     def forward(self, x, memory, tgt_mask=None, src_mask=None):
         for src_att, tgt_att, ff in zip(self.src_atts, self.tgt_atts, self.ffs):
@@ -140,7 +159,7 @@ class Decoder(nn.Module):
             x = ff(x)
         return x
 
-        
+
 class Generator(nn.Module):
     def __init__(self, dim_model, vocab):
         super(Generator, self).__init__()
@@ -148,7 +167,7 @@ class Generator(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
     
     def forward(self, x):
-        return self.sotfmax(self.proj(x))
+        return self.softmax(self.proj(x))
 
 
 class EncoderDecoder(nn.Module):
@@ -168,12 +187,14 @@ class EncoderDecoder(nn.Module):
                 nn.init.xavier_uniform_(p)
 
     def forward(self, src, tgt, src_mask, tgt_mask):
+        src = self.src_embed(src)
+        tgt = self.tgt_embed(tgt)
         memory = self.encode(src, src_mask)
-        x = self.decode(tgt, memory, tgt_mask, src_mask)
+        x = self.decode(tgt, tgt_mask, memory, src_mask)
         return self.generator(x)
     
     def encode(self, src, mask):
-        self.encoder(src, mask)
+        return self.encoder(src, mask)
     
     def decode(self, tgt, tgt_mask, memory, src_mask):
-        self.decoder(tgt, memory, tgt_mask, src_mask)
+        return self.decoder(tgt, memory, tgt_mask, src_mask)

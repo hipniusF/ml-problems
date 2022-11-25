@@ -2,8 +2,10 @@ import math
 
 import torch
 import torch.nn.functional as F
-from torch.multiprocessing import Pool
 from torch import nn
+import numpy as np
+from datetime import datetime
+from tqdm.auto import tqdm
 
 
 class Attention(nn.Module):
@@ -173,6 +175,7 @@ class Generator(nn.Module):
 class EncoderDecoder(nn.Module):
     def __init__(self, src_vocab, tgt_vocab, N=6, dim_model=512, d_ff=2048, dropout=0.1):
         super(EncoderDecoder, self).__init__()
+        self.dim_model = dim_model
         self.src_vocab = src_vocab
         self.tgt_vocab = tgt_vocab
         self.encoder = Encoder(N, dim_model, d_ff, dropout)
@@ -198,3 +201,114 @@ class EncoderDecoder(nn.Module):
     
     def decode(self, tgt, tgt_mask, memory, src_mask):
         return self.decoder(tgt, memory, tgt_mask, src_mask)
+
+
+class LabelSmoothing(nn.Module):
+    "Implement label smoothing."
+    def __init__(self, size, padding_idx=1, smoothing=0.0):
+        super(LabelSmoothing, self).__init__()
+        self.criterion = nn.KLDivLoss(reduction="sum")
+        self.padding_idx = padding_idx
+        self.confidence = 1.0 - smoothing
+        self.smoothing = smoothing
+        self.size = size
+        self.true_dist = None
+
+    def forward(self, x, target):
+        assert x.size(1) == self.size
+        true_dist = x.data.clone()
+        true_dist.fill_(self.smoothing / (self.size - 2))
+        true_dist.scatter_(1, target.data.unsqueeze(1), self.confidence)
+        true_dist[:, self.padding_idx] = 0
+        mask = torch.nonzero(target.data == self.padding_idx)
+        if mask.dim() > 0:
+            true_dist.index_fill_(0, mask.squeeze(), 0.0)
+        self.true_dist = true_dist
+        return self.criterion(x, true_dist.clone().detach())
+
+
+def scheduler_func(step, dim_model, warmup=4000):
+    if step == 0:
+        step = 1
+    return dim_model ** (-0.5) * min (step**(-.5),step*warmup**(-1.5))
+
+
+class Trainer:
+    def __init__(self, model):
+        self.model = model
+        self.optim = torch.optim.Adam(model.parameters(), lr=1, betas=(0.9, 0.98), eps=10e-9)
+        self.scheduler = torch.optim.lr_scheduler.LambdaLR(
+            self.optim, lr_lambda=lambda step: scheduler_func(step, model.dim_model))
+        self.loss_fn = nn.CrossEntropyLoss() #LabelSmoothing(size=model.tgt_vocab)
+
+        self.losses = []
+        self.step = 0
+
+    def train_loop(self, steps, loader):
+        self.model.train()
+
+        with tqdm(initial=self.step, total=steps) as tbar:
+            while self.step <= steps:
+                for batch in loader:
+                    src = batch['src']
+                    tgt = batch['trg']
+                    src_mask = batch['src_mask']
+                    tgt_masks = batch['trg_mask']
+                    trg_y = batch['trg_y']
+                    for tgt_mask in tgt_masks:
+                        y_hat = self.model(src, tgt, src_mask, tgt_mask)
+                        loss = self.loss_fn(y_hat.view(-1, self.model.tgt_vocab), trg_y.reshape(-1))
+                        loss.backward()
+                        self.optim.step()
+                        self.scheduler.step()
+
+                    if self.step % 10_000 == 0:
+                        self.save(f'./chkpnts/checkpnt_step-{self.step // 1000}k.pt')
+                    self.step+=1
+                    tbar.update(1)
+                    break
+
+    def notify(self, x):
+        '''
+        Send notification through:
+        https://github.com/marcoperg/telegram-notifier
+        '''
+
+        import os
+        import io
+        import requests
+        import dotenv
+        dotenv.load_dotenv()
+
+        x = x.squeeze()
+        x = x.movedim((1, 2, 0), (0, 1, 2))
+        x = x.detach().cpu().numpy()
+        x = (x + 1) / 2
+        x = np.clip(x, 0, 1)
+        #plt.imshow(x)
+        #plt.show()
+
+        buf = io.BytesIO()
+        plt.imsave(buf, x, format='png')
+        image_data = buf.getvalue()
+        url = 'http://localhost:3000'
+        files = {'photo': image_data}
+        headers = {'token': os.environ['SECRET']}
+        data = {'text': f'Step {self.step//1000}k'}
+        requests.post(url, files=files, data=data, headers=headers)
+        
+    def save(self, path):
+            torch.save({'model': self.model.state_dict(),
+                        'optim': self.optim.state_dict(),
+                        'losses': self.losses,
+                        'step': self.step,
+                        'timestamp': str(datetime.now())
+                       },
+                path)
+    
+    def load(self, path):
+        chk = torch.load(path)
+        self.model.load_state_dict(chk['model'])
+        self.optim.load_state_dict(chk['optim'])
+        self.losses = chk['losses']
+        self.step = chk['step'] 

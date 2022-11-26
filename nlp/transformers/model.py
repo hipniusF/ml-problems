@@ -47,9 +47,9 @@ class MultiHeadAttention(nn.Module):
             raise TypeError(
                 'Input to MultiHeadAttention excepted to be either Tensor or 3-tuple of Tensors')
         batch_size = q.size(0)
-        q = self.lv(q).view(batch_size, -1, self.h, self.dim_k)
-        k = self.lv(k).view(batch_size, -1, self.h, self.dim_k)
-        v = self.lv(v).view(batch_size, -1, self.h, self.dim_k)
+        q = self.lv(q).view(batch_size, -1, self.h, self.dim_k).transpose(1, 2)
+        k = self.lv(k).view(batch_size, -1, self.h, self.dim_k).transpose(1, 2)
+        v = self.lv(v).view(batch_size, -1, self.h, self.dim_k).transpose(1, 2)
         x = self.attention(q, k, v, mask).contiguous().view(batch_size, -1, self.h*self.dim_k)
         del q
         del k
@@ -244,7 +244,7 @@ class Trainer:
         self.losses = []
         self.step = 0
 
-    def train_loop(self, steps, loader):
+    def train_loop(self, steps, loader, save=True):
         self.model.train()
 
         with tqdm(initial=self.step, total=steps) as tbar:
@@ -253,20 +253,22 @@ class Trainer:
                     src = batch['src']
                     tgt = batch['trg']
                     src_mask = batch['src_mask']
-                    tgt_masks = batch['trg_mask']
+                    tgt_mask = batch['trg_mask']
                     trg_y = batch['trg_y']
-                    for tgt_mask in tgt_masks:
-                        y_hat = self.model(src, tgt, src_mask, tgt_mask)
-                        loss = self.loss_fn(y_hat.view(-1, self.model.tgt_vocab), trg_y.reshape(-1))
-                        loss.backward()
-                        self.optim.step()
-                        self.scheduler.step()
 
-                    if self.step % 10_000 == 0:
+                    y_hat = self.model(src, tgt, src_mask, tgt_mask)
+                    loss = self.loss_fn(y_hat.view(-1, self.model.tgt_vocab), trg_y.reshape(-1))
+                    loss.backward()
+                    self.losses.append(loss.item())
+                    self.optim.step()
+                    self.scheduler.step()
+
+                    if self.step % 10_000 == 0 and save:
                         self.save(f'./chkpnts/checkpnt_step-{self.step // 1000}k.pt')
                     self.step+=1
                     tbar.update(1)
-                    break
+                    if self.step > steps:
+                        break
 
     def notify(self, x):
         '''

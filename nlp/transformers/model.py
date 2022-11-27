@@ -263,7 +263,7 @@ class Trainer:
                     self.optim.step()
                     self.scheduler.step()
 
-                    if self.step % 10_000 == 0 and save:
+                    if self.step % 50_000 == 0 and save:
                         self.save(f'./chkpnts/checkpnt_step-{self.step // 1000}k.pt')
                     self.step+=1
                     tbar.update(1)

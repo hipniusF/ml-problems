@@ -1,6 +1,7 @@
 import math
 
 import torch
+from torch.utils.data import DataLoader
 import torch.nn.functional as F
 from torch import nn
 import numpy as np
@@ -234,18 +235,32 @@ def scheduler_func(step, dim_model, warmup=4000):
 
 
 class Trainer:
-    def __init__(self, model):
+    def __init__(self, model, dataset, criterion='cross_entropy'):
         self.model = model
+        self.dataset = dataset
         self.optim = torch.optim.Adam(model.parameters(), lr=1, betas=(0.9, 0.98), eps=10e-9)
         self.scheduler = torch.optim.lr_scheduler.LambdaLR(
             self.optim, lr_lambda=lambda step: scheduler_func(step, model.dim_model))
-        self.loss_fn = nn.CrossEntropyLoss() #LabelSmoothing(size=model.tgt_vocab)
+        self.loss_fn = self._get_loss(criterion)
 
         self.losses = []
         self.step = 0
 
-    def train_loop(self, steps, loader, save=True):
+    def _get_loss(self, criterion):
+        if criterion == 'cross_entropy':
+            return nn.CrossEntropyLoss() 
+        elif criterion == 'label_smoothing':
+            return LabelSmoothing(
+                size=len(self.dataset.trg_vocab),
+                padding_idx=self.dataset.pad_symbol,
+                smoothing=0.1)
+        else:
+            raise ValueError(f'{criterion} is not a valid criterion')
+
+    def train_loop(self, steps, batch_size=1, save=True):
         self.model.train()
+        loader = DataLoader(
+            self.dataset.train, shuffle=True, batch_size=batch_size, collate_fn=self.dataset.collate_fn)
 
         with tqdm(initial=self.step, total=steps) as tbar:
             while self.step <= steps:
@@ -273,7 +288,7 @@ class Trainer:
     def save(self, path):
             torch.save({'model': self.model.state_dict(),
                         'optim': self.optim.state_dict(),
-                        'scheduler': self.scheduler.state_dict().
+                        'scheduler': self.scheduler.state_dict(),
                         'losses': self.losses,
                         'step': self.step,
                         'timestamp': str(datetime.now())

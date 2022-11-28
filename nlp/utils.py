@@ -109,6 +109,9 @@ class Multi30KEn2DeDatasetTokenizer:
         self.src_vocab = self.src_field.vocab
         self.trg_vocab = self.trg_field.vocab
 
+        self.start_symbol = int(self.trg_field.numericalize([['<s>']]))
+        self.pad_symbol = int(self.trg_field.numericalize([['<pad>']]))
+
     def itos(self, t, field='trg'):
         s = []
         for c in t:
@@ -129,7 +132,7 @@ class Multi30KEn2DeDatasetTokenizer:
         trg = trg_list[:, :-1]
         trg_y = trg_list[:,1:]
 
-        pad = int(self.trg_field.numericalize([['<pad>']]))
+        pad = self.pad_symbol
         src_mask = (src_list != pad).unsqueeze(-2).unsqueeze(-3)
         trg_mask = (trg != pad).unsqueeze(-2).unsqueeze(-2)
 

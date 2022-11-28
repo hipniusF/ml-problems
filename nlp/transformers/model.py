@@ -190,16 +190,16 @@ class EncoderDecoder(nn.Module):
                 nn.init.xavier_uniform_(p)
 
     def forward(self, src, tgt, src_mask, tgt_mask):
-        src = self.src_embed(src)
-        tgt = self.tgt_embed(tgt)
         memory = self.encode(src, src_mask)
         x = self.decode(tgt, tgt_mask, memory, src_mask)
         return self.generator(x)
     
     def encode(self, src, mask):
+        src = self.src_embed(src)
         return self.encoder(src, mask)
     
     def decode(self, tgt, tgt_mask, memory, src_mask):
+        tgt = self.tgt_embed(tgt)
         return self.decoder(tgt, memory, tgt_mask, src_mask)
 
 
@@ -269,39 +269,11 @@ class Trainer:
                     tbar.update(1)
                     if self.step > steps:
                         break
-
-    def notify(self, x):
-        '''
-        Send notification through:
-        https://github.com/marcoperg/telegram-notifier
-        '''
-
-        import os
-        import io
-        import requests
-        import dotenv
-        dotenv.load_dotenv()
-
-        x = x.squeeze()
-        x = x.movedim((1, 2, 0), (0, 1, 2))
-        x = x.detach().cpu().numpy()
-        x = (x + 1) / 2
-        x = np.clip(x, 0, 1)
-        #plt.imshow(x)
-        #plt.show()
-
-        buf = io.BytesIO()
-        plt.imsave(buf, x, format='png')
-        image_data = buf.getvalue()
-        url = 'http://localhost:3000'
-        files = {'photo': image_data}
-        headers = {'token': os.environ['SECRET']}
-        data = {'text': f'Step {self.step//1000}k'}
-        requests.post(url, files=files, data=data, headers=headers)
         
     def save(self, path):
             torch.save({'model': self.model.state_dict(),
                         'optim': self.optim.state_dict(),
+                        'scheduler': self.scheduler.state_dict().
                         'losses': self.losses,
                         'step': self.step,
                         'timestamp': str(datetime.now())
@@ -312,5 +284,6 @@ class Trainer:
         chk = torch.load(path)
         self.model.load_state_dict(chk['model'])
         self.optim.load_state_dict(chk['optim'])
+        self.scheduler.load_state_dict(chk['scheduler'])
         self.losses = chk['losses']
         self.step = chk['step'] 

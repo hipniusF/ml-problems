@@ -20,7 +20,7 @@ class Attention(nn.Module):
     def forward(self, q, k, v, mask=None):
         computed_queries = q.matmul(k.transpose(-2, -1)) / math.sqrt(self.dim_k)
         if mask is not None:
-            computed_queries = computed_queries.masked_fill(mask == 0, value=-1e9)
+            computed_queries = computed_queries.masked_fill(mask == 0, value=float('-inf'))
         computed_queries = F.softmax(computed_queries, dim=-1)
         computed_queries = self.dropout(computed_queries)
         return computed_queries.matmul(v)
@@ -88,7 +88,7 @@ class PositionalEncoding(nn.Module):
         pe = torch.zeros((max_len, dim_model))
         denominator = torch.exp(torch.arange(0, dim_model, 2)
                                 * (-math.log(10000.0) / dim_model))
-        pos = torch.arange(max_len).unsqueeze(1)
+        pos = torch.arange(0, max_len).unsqueeze(1)
         pe[:, 0::2] = torch.sin(pos * denominator)
         pe[:, 1::2] = torch.cos(pos * denominator)
         pe = pe.unsqueeze(0)
@@ -186,11 +186,6 @@ class EncoderDecoder(nn.Module):
         self.tgt_embed = nn.Sequential(Embedding(dim_model, tgt_vocab), PositionalEncoding(dim_model, dropout))
         self.generator = Generator(dim_model, tgt_vocab)
 
-        # Initialize parameters with Glorot / fan_avg.
-        for p in self.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
-
     def forward(self, src, tgt, src_mask, tgt_mask):
         memory = self.encode(src, src_mask)
         x = self.decode(tgt, tgt_mask, memory, src_mask)
@@ -259,9 +254,9 @@ class Trainer:
         self.dev = dev
         self.model = model
         self.dataset = dataset
-        self.optim = torch.optim.Adam(model.parameters(), lr=.5, betas=(0.9, 0.98), eps=10e-9)
+        self.optim = torch.optim.Adam(model.parameters(), lr=1, betas=(0.9, 0.98), eps=10e-9)
         self.scheduler = torch.optim.lr_scheduler.LambdaLR(
-            self.optim, lr_lambda=lambda step: scheduler_func(step, model.dim_model, warmup=3000))
+            self.optim, lr_lambda=lambda step: scheduler_func(step, model.dim_model, warmup=4000))
         self.loss_fn = self._get_loss(criterion)
 
         self.losses = []
@@ -269,9 +264,15 @@ class Trainer:
 
         self.accum_iter = 10
 
+        """
+        for p in model.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+        """
+
     def _get_loss(self, criterion):
         if criterion == 'cross_entropy':
-            return nn.CrossEntropyLoss() 
+            return nn.CrossEntropyLoss(ignore_index=self.dataset.pad_symbol, label_smoothing=0.1) 
         elif criterion == 'label_smoothing':
             return LabelSmoothing(
                 size=len(self.dataset.trg_vocab),
@@ -280,7 +281,7 @@ class Trainer:
         else:
             raise ValueError(f'{criterion} is not a valid criterion')
 
-    def train_loop(self, steps, batch_size=1, save=True):
+    def train_loop(self, steps, batch_size=1, save=True, notify=True):
         self.model.train()
         loader = DataLoader(
             self.dataset.train, shuffle=True, batch_size=batch_size, collate_fn=self.dataset.collate_fn)
@@ -296,34 +297,38 @@ class Trainer:
                     ntokens = batch['ntokens']
 
                     y_hat = self.model(src, tgt, src_mask, tgt_mask)
-                    loss = self.loss_fn(y_hat.view(-1, self.model.tgt_vocab), trg_y.reshape(-1)) / ntokens
+                    loss = self.loss_fn(
+                        y_hat.view(-1, self.model.tgt_vocab), trg_y.reshape(-1)) #/ ntokens
                     for p in self.model.parameters():
                         p.grad = None
                     loss.backward()
                     self.losses.append(loss.item())
+                    del loss
 
                     if i % self.accum_iter == 0:
                         self.optim.step()
 
                     self.scheduler.step()
 
-                    if self.step % 50_000 == 0 and save:
-                        self.save(f'./chkpnts/checkpnt_step-{self.step // 1000}k.pt')
-                        self.notify()
+                    if self.step % 50_000 == 0:
+                        if save:
+                            self.save(f'./chkpnts/checkpnt_step-{self.step // 1000}k.pt')
+                        if notify:
+                            self.notify()
                     self.step+=1
                     tbar.update(1)
                     if self.step > steps:
                         break
         
     def save(self, path):
-            torch.save({'model': self.model.state_dict(),
-                        'optim': self.optim.state_dict(),
-                        'scheduler': self.scheduler.state_dict(),
-                        'losses': self.losses,
-                        'step': self.step,
-                        'timestamp': str(datetime.now())
-                       },
-                path)
+        torch.save({'model': self.model.state_dict(),
+                    'optim': self.optim.state_dict(),
+                    'scheduler': self.scheduler.state_dict(),
+                    'losses': self.losses,
+                    'step': self.step,
+                    'timestamp': str(datetime.now())
+                    },
+            path)
     
     def load(self, path):
         chk = torch.load(path)
@@ -357,7 +362,6 @@ class Trainer:
             src, src_mask, self.dataset.start_symbol, self.dataset.subsequent_mask, dev=self.dev)
         src_str, trg_str = self.dataset.itos(src[0], field='src'), self.dataset.itos(trg[0])
 
-        plt.figure()
         plt.plot(self.losses)
         plt.title('Train losses')
         buf = io.BytesIO()

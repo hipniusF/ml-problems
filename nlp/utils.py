@@ -143,7 +143,8 @@ class Multi30KEn2DeDatasetTokenizer:
                 'trg': trg,
                 'src_mask': src_mask.to(self.dev),
                 'trg_mask': trg_mask.to(self.dev),
-                'trg_y': trg_y}
+                'trg_y': trg_y,
+                'ntokens': (trg_y != pad).data.sum()}
 
     def subsequent_mask(self, size):
         "Mask out subsequent positions."

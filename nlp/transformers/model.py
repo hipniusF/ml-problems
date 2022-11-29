@@ -7,6 +7,7 @@ from torch import nn
 import numpy as np
 from datetime import datetime
 from tqdm.auto import tqdm
+from matplotlib import pyplot as plt
 
 
 class Attention(nn.Module):
@@ -203,6 +204,25 @@ class EncoderDecoder(nn.Module):
         tgt = self.tgt_embed(tgt)
         return self.decoder(tgt, memory, tgt_mask, src_mask)
 
+    def translate(self, src, src_mask, start_symbol, subsequent_mask, dev='cpu'):
+        ys = torch.zeros(1, 1).fill_(start_symbol).type_as(src.data)
+        memory = self.encode(src, src_mask)
+
+        for _ in range(10):
+            out = self.decode(
+                ys, subsequent_mask(ys.size(1)).type_as(src.data).to(dev), memory, src_mask
+                )
+
+            prob = self.generator(out[:, -1])
+
+            _, next_word = torch.max(prob, dim=1)
+            ys = torch.cat(
+                        [ys, next_word.unsqueeze(0)],
+                dim=1
+            )
+
+        return ys
+
 
 class LabelSmoothing(nn.Module):
     "Implement label smoothing."
@@ -235,16 +255,19 @@ def scheduler_func(step, dim_model, warmup=4000):
 
 
 class Trainer:
-    def __init__(self, model, dataset, criterion='cross_entropy'):
+    def __init__(self, model, dataset, dev='cpu', criterion='cross_entropy'):
+        self.dev = dev
         self.model = model
         self.dataset = dataset
-        self.optim = torch.optim.Adam(model.parameters(), lr=1, betas=(0.9, 0.98), eps=10e-9)
+        self.optim = torch.optim.Adam(model.parameters(), lr=.5, betas=(0.9, 0.98), eps=10e-9)
         self.scheduler = torch.optim.lr_scheduler.LambdaLR(
-            self.optim, lr_lambda=lambda step: scheduler_func(step, model.dim_model))
+            self.optim, lr_lambda=lambda step: scheduler_func(step, model.dim_model, warmup=3000))
         self.loss_fn = self._get_loss(criterion)
 
         self.losses = []
         self.step = 0
+
+        self.accum_iter = 10
 
     def _get_loss(self, criterion):
         if criterion == 'cross_entropy':
@@ -264,22 +287,29 @@ class Trainer:
 
         with tqdm(initial=self.step, total=steps) as tbar:
             while self.step <= steps:
-                for batch in loader:
+                for i, batch in enumerate(loader):
                     src = batch['src']
                     tgt = batch['trg']
                     src_mask = batch['src_mask']
                     tgt_mask = batch['trg_mask']
                     trg_y = batch['trg_y']
+                    ntokens = batch['ntokens']
 
                     y_hat = self.model(src, tgt, src_mask, tgt_mask)
-                    loss = self.loss_fn(y_hat.view(-1, self.model.tgt_vocab), trg_y.reshape(-1))
+                    loss = self.loss_fn(y_hat.view(-1, self.model.tgt_vocab), trg_y.reshape(-1)) / ntokens
+                    for p in self.model.parameters():
+                        p.grad = None
                     loss.backward()
                     self.losses.append(loss.item())
-                    self.optim.step()
+
+                    if i % self.accum_iter == 0:
+                        self.optim.step()
+
                     self.scheduler.step()
 
                     if self.step % 50_000 == 0 and save:
                         self.save(f'./chkpnts/checkpnt_step-{self.step // 1000}k.pt')
+                        self.notify()
                     self.step+=1
                     tbar.update(1)
                     if self.step > steps:
@@ -301,4 +331,41 @@ class Trainer:
         self.optim.load_state_dict(chk['optim'])
         self.scheduler.load_state_dict(chk['scheduler'])
         self.losses = chk['losses']
-        self.step = chk['step'] 
+        self.step = chk['step']
+
+    def notify(self):
+        '''
+        Send notification through:
+        https://github.com/marcoperg/telegram-notifier
+        '''
+
+        import os
+        import io
+        import requests
+        import dotenv
+        dotenv.load_dotenv()
+
+        test_dl = DataLoader(
+            self.dataset.train, shuffle=True, batch_size=1, collate_fn=self.dataset.collate_fn)
+
+        example =  next(iter(test_dl))
+        src = example['src']
+        src_mask = example['src_mask']
+
+        self.model.eval()
+        trg = self.model.translate(
+            src, src_mask, self.dataset.start_symbol, self.dataset.subsequent_mask, dev=self.dev)
+        src_str, trg_str = self.dataset.itos(src[0], field='src'), self.dataset.itos(trg[0])
+
+        plt.figure()
+        plt.plot(self.losses)
+        plt.title('Train losses')
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        image_data = buf.getvalue()
+        url = 'http://localhost:3000'
+        files = {'photo': image_data}
+        headers = {'token': os.environ['SECRET']}
+        data = {'text': f'Step {self.step//1000}k\nEn: {src_str}\nDe: {trg_str}'}
+        requests.post(url, files=files, data=data, headers=headers)

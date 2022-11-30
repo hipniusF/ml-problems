@@ -110,6 +110,7 @@ class Multi30KEn2DeDatasetTokenizer:
         self.trg_vocab = self.trg_field.vocab
 
         self.start_symbol = int(self.trg_field.numericalize([['<s>']]))
+        self.end_symbol = int(self.trg_field.numericalize([['</s>']]))
         self.pad_symbol = int(self.trg_field.numericalize([['<pad>']]))
 
     def itos(self, t, field='trg'):

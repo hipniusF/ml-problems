@@ -199,13 +199,13 @@ class EncoderDecoder(nn.Module):
         tgt = self.tgt_embed(tgt)
         return self.decoder(tgt, memory, tgt_mask, src_mask)
 
-    def translate(self, src, src_mask, start_symbol, subsequent_mask, dev='cpu'):
-        ys = torch.zeros(1, 1).fill_(start_symbol).type_as(src.data)
+    def translate(self, src, src_mask, dataset, dev='cpu'):
+        ys = torch.zeros(1, 1).fill_(dataset.start_symbol).type_as(src.data)
         memory = self.encode(src, src_mask)
 
-        for _ in range(10):
+        while ys[0, -1] != dataset.end_symbol:
             out = self.decode(
-                ys, subsequent_mask(ys.size(1)).type_as(src.data).to(dev), memory, src_mask
+                ys, dataset.subsequent_mask(ys.size(1)).type_as(src.data).to(dev), memory, src_mask
                 )
 
             prob = self.generator(out[:, -1])
@@ -362,6 +362,7 @@ class Trainer:
             src, src_mask, self.dataset.start_symbol, self.dataset.subsequent_mask, dev=self.dev)
         src_str, trg_str = self.dataset.itos(src[0], field='src'), self.dataset.itos(trg[0])
 
+        plt.figure()
         plt.plot(self.losses)
         plt.title('Train losses')
         buf = io.BytesIO()

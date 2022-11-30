@@ -203,6 +203,7 @@ class EncoderDecoder(nn.Module):
         ys = torch.zeros(1, 1).fill_(dataset.start_symbol).type_as(src.data)
         memory = self.encode(src, src_mask)
 
+        i = 0
         while ys[0, -1] != dataset.end_symbol:
             out = self.decode(
                 ys, dataset.subsequent_mask(ys.size(1)).type_as(src.data).to(dev), memory, src_mask
@@ -215,6 +216,9 @@ class EncoderDecoder(nn.Module):
                         [ys, next_word.unsqueeze(0)],
                 dim=1
             )
+            if i == 50:
+                break
+            i += 1
 
         return ys
 

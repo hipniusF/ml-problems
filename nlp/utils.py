@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from urllib.request import urlopen
 import linecache
@@ -152,3 +153,27 @@ class Multi30KEn2DeDatasetTokenizer:
         attn_shape = (1, size, size)
         subsequent_mask = torch.triu(torch.ones(attn_shape), diagonal=1).type(torch.uint8)
         return subsequent_mask == 0
+
+
+def get_trainer_model(dataset, M, T, dev='cpu'):
+
+    model = M(
+        len(dataset.src_vocab),
+        len(dataset.trg_vocab),
+        dropout=.1).to(dev)
+
+    trainer = T(
+        model, dataset, dev=dev, criterion='cross_entropy')
+    try:
+        chks = os.listdir('./chkpnts')
+        ns = [int(chk.split('checkpnt_step-')[1].split('k.pt')[0])
+             for chk in chks]
+        if len(ns) == 0:
+            raise Exception('No checkpoints in ./chkpnts')
+        n = sorted(ns)[-1]
+        print(f'checkpnt_epoch-{n}k.pt')
+        trainer.load(f'chkpnts/checkpnt_step-{n}k.pt')
+
+    except Exception as e:
+        print('error: ', e)
+    return trainer, model

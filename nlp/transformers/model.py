@@ -363,7 +363,7 @@ class Trainer:
 
         self.model.eval()
         trg = self.model.translate(
-            src, src_mask, self.dataset.start_symbol, self.dataset.subsequent_mask, dev=self.dev)
+            src, src_mask, self.dataset, dev=self.dev)
         src_str, trg_str = self.dataset.itos(src[0], field='src'), self.dataset.itos(trg[0])
 
         plt.figure()

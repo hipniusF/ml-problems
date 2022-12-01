@@ -16,5 +16,13 @@ from transformers.model import EncoderDecoder, Trainer
 if __name__ == '__main__':
     dataset = Multi30KEn2DeDatasetTokenizer(dev=dev)
     trainer, model = get_trainer_model(dataset, EncoderDecoder, Trainer, dev=dev)
-    trainer.load('./current.pt')
-    trainer.train_loop(1_000_000, batch_size=400, save=True, notify=True)
+    try:
+        trainer.load('./chkpnts/current.pt')
+        print(f'Current checkpnt at step {trainer.step:,}')
+    except FileNotFoundError:
+        print('current.pt not found')
+    try:
+        trainer.train_loop(1_000_000, batch_size=400, save=True, notify=True)
+    except KeyboardInterrupt:
+        print('saving current.pt...')
+        trainer.save('./chkpnts/current.pt')

@@ -17,12 +17,13 @@ if __name__ == '__main__':
     dataset = Multi30KEn2DeDatasetTokenizer(dev=dev)
     trainer, model = get_trainer_model(dataset, EncoderDecoder, Trainer, dev=dev)
     try:
-        trainer.load('./chkpnts/current.pt')
+        trainer.load('./current.pt')
         print(f'Current checkpnt at step {trainer.step:,}')
     except FileNotFoundError:
         print('current.pt not found')
     try:
-        trainer.train_loop(1_000_000, batch_size=400, save=True, notify=True)
+        # true batch size 416 * 5 = 2080
+        trainer.train_loop(10_000_000, batch_size=416, accum_steps=5, save=True, notify=True) 
     except KeyboardInterrupt:
         print('saving current.pt...')
-        trainer.save('./chkpnts/current.pt')
+        trainer.save('./current.pt')

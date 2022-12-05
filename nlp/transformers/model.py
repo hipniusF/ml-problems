@@ -266,8 +266,6 @@ class Trainer:
         self.losses = []
         self.step = 0
 
-        self.accum_iter = 10
-
         """
         for p in model.parameters():
             if p.dim() > 1:
@@ -285,7 +283,7 @@ class Trainer:
         else:
             raise ValueError(f'{criterion} is not a valid criterion')
 
-    def train_loop(self, steps, batch_size=1, save=True, notify=True):
+    def train_loop(self, steps, batch_size=1, accum_steps=1, save=True, notify=True):
         self.model.train()
         loader = DataLoader(
             self.dataset.train, shuffle=True, batch_size=batch_size, collate_fn=self.dataset.collate_fn)
@@ -303,16 +301,16 @@ class Trainer:
                     y_hat = self.model(src, tgt, src_mask, tgt_mask)
                     loss = self.loss_fn(
                         y_hat.view(-1, self.model.tgt_vocab), trg_y.reshape(-1)) #/ ntokens
-                    for p in self.model.parameters():
-                        p.grad = None
                     loss.backward()
                     self.losses.append(loss.item())
                     del loss
 
-                    if i % self.accum_iter == 0:
-                        self.optim.step()
+                    if i % accum_steps == 0:
+                        for p in self.model.parameters():
+                            p.grad = None
 
-                    self.scheduler.step()
+                        self.optim.step()
+                        self.scheduler.step()
 
                     if self.step % 50_000 == 0:
                         if save:

@@ -23,7 +23,7 @@ if __name__ == '__main__':
         print('current.pt not found')
     try:
         # true batch size 416 * 5 = 2080
-        trainer.train_loop(10_000_000, batch_size=416, accum_steps=5, save=True, notify=True) 
+        trainer.train_loop(100_000, batch_size=416, accum_steps=5, save=True, notify=True) 
     except KeyboardInterrupt:
         print('saving current.pt...')
         trainer.save('./current.pt')

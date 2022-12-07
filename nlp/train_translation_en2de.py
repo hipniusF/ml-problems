@@ -1,3 +1,4 @@
+import pickle
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
@@ -14,7 +15,15 @@ from transformers.model import EncoderDecoder, Trainer
 
 
 if __name__ == '__main__':
-    dataset = Multi30KEn2DeDatasetTokenizer(dev=dev)
+    try:
+        print('Trying to load dataset')
+        dataset = pickle.load('./downloads/wmt14.pt')
+    except TypeError:
+        print('Dataset not found. Generating it...')
+        dataset = WMT14En2DeDatasetTokenizer(dev=dev)
+        print('Saving dataset checkpoint...')
+        with open('./downloads/wmt14.pt', 'wb') as f:
+            pickle.dumps(dataset, f)
     trainer, model = get_trainer_model(dataset, EncoderDecoder, Trainer, dev=dev)
     try:
         trainer.load('./current.pt')
@@ -23,7 +32,7 @@ if __name__ == '__main__':
         print('current.pt not found')
     try:
         # true batch size 416 * 5 = 2080
-        trainer.train_loop(100_000, batch_size=416, accum_steps=5, save=True, notify=True) 
+        trainer.train_loop(100_000, batch_size=32, accum_steps=5, save=True, notify=True) 
     except KeyboardInterrupt:
         print('saving current.pt...')
         trainer.save('./current.pt')

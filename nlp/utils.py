@@ -83,7 +83,7 @@ class En2DeWMT14Dataset(torch.utils.data.Dataset):
         return line, label
 
 
-class Multi30KEn2DeDatasetTokenizer:
+class WMT14En2DeDatasetTokenizer:
     def __init__(self, dev):
         self.dev = dev
         tokenize_en = data.get_tokenizer("spacy", language='en_core_web_sm')
@@ -92,8 +92,8 @@ class Multi30KEn2DeDatasetTokenizer:
         src = data.Field(tokenize_en)
         tgt = data.Field(tokenize_de)
 
-        self.train, self.val, self.test = datasets.Multi30k.splits(
-            ('.en', '.de'), fields=(src, tgt) , root='./downloads')
+        self.train, self.val, self.test = datasets.WMT14.splits(
+            ('.en', '.de'), fields=(src, tgt) , root='downloads')
 
         self.src_field = self.train.fields['src'] 
         self.trg_field = self.train.fields['trg'] 
@@ -104,8 +104,11 @@ class Multi30KEn2DeDatasetTokenizer:
             trg_list.append(dt_pnt.trg)
 
         specials = ['<pad>', '<s>', '</s>', "<blank>", "<unk>"]
+        print('Generating src vocab...')
         self.src_field.build_vocab(src_list, specials=specials)
+        print('Generating trg vocab...')
         self.trg_field.build_vocab(trg_list, specials=specials)
+        print('Done.')
 
         self.src_vocab = self.src_field.vocab
         self.trg_vocab = self.trg_field.vocab

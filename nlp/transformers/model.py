@@ -287,9 +287,11 @@ class Trainer:
         self.model.train()
         loader = DataLoader(
             self.dataset.train, shuffle=True, batch_size=batch_size, collate_fn=self.dataset.collate_fn)
+        print(len(loader) % 5)
 
-        with tqdm(initial=self.step, total=steps) as tbar:
-            while self.step <= steps:
+        true_steps = steps*accum_steps
+        with tqdm(initial=self.step, total=true_steps) as tbar:
+            while self.step <= true_steps:
                 for i, batch in enumerate(loader):
                     src = batch['src']
                     tgt = batch['trg']
@@ -306,13 +308,13 @@ class Trainer:
                     del loss
 
                     if i % accum_steps == 0:
-                        for p in self.model.parameters():
-                            p.grad = None
-
                         self.optim.step()
                         self.scheduler.step()
 
-                    if self.step % 50_000 == 0:
+                        for p in self.model.parameters():
+                            p.grad = None
+
+                    if self.step % 20_000 == 0:
                         if save:
                             self.save(f'./chkpnts/checkpnt_step-{self.step // 1000}k.pt')
                         if notify:

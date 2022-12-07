@@ -10,20 +10,12 @@ from tqdm.auto import tqdm
 
 dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-from utils import Multi30KEn2DeDatasetTokenizer, get_trainer_model
+from utils import WMT14En2DeDatasetTokenizer, get_trainer_model
 from transformers.model import EncoderDecoder, Trainer
 
 
 if __name__ == '__main__':
-    try:
-        print('Trying to load dataset')
-        dataset = pickle.load('./downloads/wmt14.pt')
-    except TypeError:
-        print('Dataset not found. Generating it...')
-        dataset = WMT14En2DeDatasetTokenizer(dev=dev)
-        print('Saving dataset checkpoint...')
-        with open('./downloads/wmt14.pt', 'wb') as f:
-            pickle.dumps(dataset, f)
+    dataset = WMT14En2DeDatasetTokenizer(dev=dev)
     trainer, model = get_trainer_model(dataset, EncoderDecoder, Trainer, dev=dev)
     try:
         trainer.load('./current.pt')

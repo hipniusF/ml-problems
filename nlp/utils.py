@@ -98,16 +98,14 @@ class WMT14En2DeDatasetTokenizer:
         self.src_field = self.train.fields['src'] 
         self.trg_field = self.train.fields['trg'] 
 
-        src_list, trg_list = [], []
-        for dt_pnt in self.train:
-            src_list.append(dt_pnt.src)
-            trg_list.append(dt_pnt.trg)
-
         specials = ['<pad>', '<s>', '</s>', "<blank>", "<unk>"]
         print('Generating src vocab...')
-        self.src_field.build_vocab(src_list, specials=specials)
+        with open('./downloads/wmt14/vocab.50K.en', 'r') as f:
+            self.src_field.build_vocab([[x] for x in f.read().split('\n')], specials=specials)
+
         print('Generating trg vocab...')
-        self.trg_field.build_vocab(trg_list, specials=specials)
+        with open('./downloads/wmt14/vocab.50K.de', 'r') as f:
+            self.trg_field.build_vocab([[x] for x in f.read().split('\n')], specials=specials)
         print('Done.')
 
         self.src_vocab = self.src_field.vocab
@@ -159,7 +157,6 @@ class WMT14En2DeDatasetTokenizer:
 
 
 def get_trainer_model(dataset, M, T, dev='cpu'):
-
     model = M(
         len(dataset.src_vocab),
         len(dataset.trg_vocab),

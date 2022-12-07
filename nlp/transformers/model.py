@@ -287,7 +287,6 @@ class Trainer:
         self.model.train()
         loader = DataLoader(
             self.dataset.train, shuffle=True, batch_size=batch_size, collate_fn=self.dataset.collate_fn)
-        print(len(loader) % 5)
 
         true_steps = steps*accum_steps
         with tqdm(initial=self.step, total=true_steps) as tbar:

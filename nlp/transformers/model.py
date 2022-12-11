@@ -308,11 +308,11 @@ class Trainer:
 
                     if i % accum_steps == 0:
                         self.optim.step()
-                        self.scheduler.step()
 
                         for p in self.model.parameters():
                             p.grad = None
 
+                    self.scheduler.step()
                     if self.step % 20_000 == 0:
                         if save:
                             self.save(f'./chkpnts/checkpnt_step-{self.step // 1000}k.pt')

@@ -258,7 +258,7 @@ class Trainer:
         self.dev = dev
         self.model = model
         self.dataset = dataset
-        self.optim = torch.optim.Adam(model.parameters(), lr=1, betas=(0.9, 0.98), eps=1-9)
+        self.optim = torch.optim.Adam(model.parameters(), lr=1, betas=(0.9, 0.98), eps=1e-9)
         self.scheduler = torch.optim.lr_scheduler.LambdaLR(
             self.optim, lr_lambda=lambda step: scheduler_func(step, model.dim_model, warmup=4000))
         self.loss_fn = self._get_loss(criterion)

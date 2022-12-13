@@ -258,7 +258,7 @@ class Trainer:
         self.dev = dev
         self.model = model
         self.dataset = dataset
-        self.optim = torch.optim.Adam(model.parameters(), lr=1, betas=(0.9, 0.98), eps=10e-9)
+        self.optim = torch.optim.Adam(model.parameters(), lr=1, betas=(0.9, 0.98), eps=1-9)
         self.scheduler = torch.optim.lr_scheduler.LambdaLR(
             self.optim, lr_lambda=lambda step: scheduler_func(step, model.dim_model, warmup=4000))
         self.loss_fn = self._get_loss(criterion)
@@ -308,11 +308,8 @@ class Trainer:
 
                     if i % accum_steps == 0:
                         self.optim.step()
-
-                        for p in self.model.parameters():
-                            p.grad = None
-
-                    self.scheduler.step()
+                        self.scheduler.step()
+                        self.model.zero_grad(set_to_none=True)
                     if self.step % 20_000 == 0:
                         if save:
                             self.save(f'./chkpnts/checkpnt_step-{self.step // 1000}k.pt')
@@ -322,6 +319,9 @@ class Trainer:
                     tbar.update(1)
                     if self.step > steps:
                         break
+                self.optim.step()
+                self.scheduler.step()
+                self.model.zero_grad(set_to_none=True)
         
     def save(self, path):
         torch.save({'model': self.model.state_dict(),

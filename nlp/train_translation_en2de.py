@@ -20,10 +20,11 @@ if __name__ == '__main__':
     try:
         trainer.load('./current.pt')
         print(f'Current checkpnt at step {trainer.step:,}')
+        trainer.model.notify()
     except FileNotFoundError:
         print('current.pt not found')
     try:
-        trainer.train_loop(100_000, batch_size=100, accum_steps=10, save=True, notify=True) 
+        trainer.train_loop(100_000, batch_size=80, accum_steps=12, save=True, notify=True) 
     except KeyboardInterrupt:
         print('saving current.pt...')
         trainer.save('./current.pt')

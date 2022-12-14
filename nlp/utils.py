@@ -114,6 +114,7 @@ class WMT14En2DeDatasetTokenizer:
         self.start_symbol = int(self.trg_field.numericalize([['<s>']]))
         self.end_symbol = int(self.trg_field.numericalize([['</s>']]))
         self.pad_symbol = int(self.trg_field.numericalize([['<pad>']]))
+        self.unk_symbol = int(self.trg_field.numericalize([['<unk>']]))
 
     def itos(self, t, field='trg'):
         s = []
@@ -163,7 +164,7 @@ def get_trainer_model(dataset, M, T, dev='cpu'):
         dropout=.1).to(dev)
 
     trainer = T(
-        model, dataset, dev=dev, criterion='cross_entropy')
+        model, dataset, dev=dev, criterion='label_smoothing')
     try:
         chks = os.listdir('./chkpnts')
         ns = [int(chk.split('checkpnt_step-')[1].split('k.pt')[0])

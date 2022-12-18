@@ -161,7 +161,7 @@ def get_trainer_model(dataset, M, T, dev='cpu'):
     model = M(
         len(dataset.src_vocab),
         len(dataset.trg_vocab),
-        dropout=.1).to(dev)
+        dropout=.3).to(dev)
 
     trainer = T(
         model, dataset, dev=dev, criterion='label_smoothing')

@@ -11,7 +11,7 @@ from tqdm.auto import tqdm
 dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 from utils import WMT14En2DeDatasetTokenizer, get_trainer_model
-from transformers.model import EncoderDecoder, Trainer
+from models.encoderdecoder import EncoderDecoder, Trainer
 
 
 if __name__ == '__main__':
